@@ -1,23 +1,23 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <mpi.h>
+#include <string.h>
+#include <stdlib.h>
 #define m 3
 #define k 4
 
 int main(int argc, char** argv) {
-    static int a[m][k];
-    int b[k];
-    int rank, p, i, j;
-
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &p);
-
-    int num_rows = (m + p - 1) / p;
-    int nizA[num_rows * k];
-    int sendbuf[p * num_rows * k];
-
-    if (rank == 0) {
+	int a[m][k], nizB[k];
+	int rank, i, j, p;
+	
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &p);
+	
+	int num_rows = (m + p - 1) / p;
+	int nizA[num_rows * k];
+	ind sendbuf[p * num_rows * k];
+	
+	if (rank == 0) {
         for (i = 0; i < m; i++)
             for (j = 0; j < k; j++)
                 a[i][j] = i * k + j + 1;
@@ -46,22 +46,18 @@ int main(int argc, char** argv) {
         while (idx < p * num_rows * k)
             sendbuf[idx++] = 0;
     }
-
-    MPI_Scatter(sendbuf, num_rows * k, MPI_INT, 
-                nizA, num_rows * k, MPI_INT, 
-                0, MPI_COMM_WORLD);
-
-    MPI_Bcast(b, k, MPI_INT, 0, MPI_COMM_WORLD);
-
-    int local_result[num_rows];  // Rezultat za lokalne vrste
-
-    for (i = 0; i < num_rows; i++) {
-        int global_row = rank + i * p;  // Koja je ovo vrsta globalno?
+	
+	MPI_Scatter(sendbuf, num_rows * k, MPI_INT, nizA, num_rows * k, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(b, k, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	int local_result[num_rows];
+	
+	  for (i = 0; i < num_rows; i++) {
+        int global_row = rank + i * p;
         
-        if (global_row < m) {  // Proveri da li je validna vrsta
+        if (global_row < m) {
             local_result[i] = 0;
             
-            // Skalarni proizvod vrste × vektor b
             for (j = 0; j < k; j++) {
                 local_result[i] += nizA[i * k + j] * b[j];
             }
@@ -70,47 +66,30 @@ int main(int argc, char** argv) {
                 rank, global_row, local_result[i]);
         }
     }
+	
+	int final_result[m];
 
-    // SABERI SVE PARCIJALNE REZULTATE (Gather ili Reduce)
-    int final_result[m];
-
-    // Opcija 1: Gather - sakupi sve rezultate na proces 0
-    // (Složenije jer je ciklična distribucija)
-
-    // Opcija 2: Allgatherv ili individualni Send/Recv
-    if (rank == 0) {
-        // Proces 0 već ima svoje rezultate
+	if (rank == 0) {
         for (i = 0; i < num_rows; i++) {
             int global_row = rank + i * p;
             if (global_row < m)
                 final_result[global_row] = local_result[i];
         }
         
-        // Prima rezultate od drugih procesa
         for (int proc = 1; proc < p; proc++) {
-            int proc_rows = (m + proc) / p;  // Koliko vrsta ima taj proces
+            int proc_rows = (m + proc) / p;
             int recv_buf[proc_rows];
             
             MPI_Recv(recv_buf, proc_rows, MPI_INT, proc, 0, 
                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             
-            // Stavi na prava mesta
             for (i = 0; i < proc_rows; i++) {
                 int global_row = proc + i * p;
                 if (global_row < m)
                     final_result[global_row] = recv_buf[i];
             }
         }
-        
-        // Ispis finalnog rezultata
-        printf("\n========================================\n");
-        printf("REZULTAT A × b:\n");
-        for (i = 0; i < m; i++)
-            printf("rezultat[%d] = %d\n", i, final_result[i]);
-        printf("========================================\n");
-        
-    } else {
-        // Ostali procesi šalju svoje rezultate procesu 0
+	} else {
         int actual_rows = 0;
         for (i = 0; i < num_rows; i++) {
             int global_row = rank + i * p;
@@ -120,8 +99,7 @@ int main(int argc, char** argv) {
         
         MPI_Send(local_result, actual_rows, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
-
-
-    MPI_Finalize();
+	
+	MPI_Finalize();
     return 0;
 }
