@@ -1,125 +1,95 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <mpi.h>
 
-#define n 4  
-#define m 6  
+#define n 6
+#define m 6
+#define p 3
 
 int main(int argc, char** argv) {
-    static int A[n][m];
-    int b[m];
-    int rank, p, i, j;
-
+    int size, rank;
     MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &p);
 
-    int num_local_cols = (m + p - 1) / p;
-
-    int local_columns[n * num_local_cols]; 
-    int local_b[num_local_cols];             
-    int local_result[n];                     
+    int A[n][m], B[m], C[n];
+    int localColumns[n][m/p];
+    int localVec[m/p];
 
     if (rank == 0) {
-        // Inicijalizuj matricu A
-        for (i = 0; i < n; i++)
-            for (j = 0; j < m; j++)
-                A[i][j] = i * m + j + 1;
-
-        printf("Matrica A (%d×%d):\n", n, m);
-        for (i = 0; i < n; i++) {
-            for (j = 0; j < m; j++)
-                printf("%4d", A[i][j]);
+        printf("Inicijalna matrica A:\n");
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < m; j++) {
+                A[i][j] = (i + j) % 10;
+                printf("%d\t", A[i][j]);
+            }
             printf("\n");
         }
+        fflush(stdout);
 
-        // Inicijalizuj vektor b
-        for (i = 0; i < m; i++)
-            b[i] = i + 1;
-
-        printf("\nVektor b (%d elemenata): ", m);
-        for (i = 0; i < m; i++)
-            printf("%4d", b[i]);
-        printf("\n-------------------\n");
+        printf("Inicijalna vector B:");
+        for (int i = 0; i < m; i++) {
+            B[i] = i+1;
+            printf("%d ", B[i]);
+        }
+        printf("\n");
     }
 
-    MPI_Bcast(&A[0][0], n * m, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Datatype col_vec, col_type;
+    MPI_Type_vector(m/p * n, 1, p, MPI_INT, &col_vec);
+    MPI_Type_create_resized(col_vec, 0, sizeof(int), &col_type);
+    MPI_Type_free(&col_vec);
+    MPI_Type_commit(&col_type);
 
-    int *sendbuf_A = NULL;
-    
-    if (rank == 0) {
-        sendbuf_A = (int*)malloc(n * m * sizeof(int));
-        int idx = 0;
+    MPI_Scatter(A, 1, col_type, localColumns, n*(m/p), MPI_INT, 0, MPI_COMM_WORLD);
 
-        for (int proc = 0; proc < p; proc++) {
-            for (int col = proc; col < m; col += p) {
-                for (int row = 0; row < n; row++) {
-                    sendbuf_A[idx++] = A[row][col];
-                }
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    printf("\nProces %d local columns:\n", rank);
+        for (int i = 0; i < n; i++){
+            for (int j = 0; j < m/p; j++){
+                printf("%d\t", localColumns[i][j]);
             }
-        }
+            printf("\n");
+        }   
+    printf("\n-----------------------------");
 
-        while (idx < p * num_local_cols * n) {
-            sendbuf_A[idx++] = 0;
-        }
-    }
+    MPI_Datatype vec, vec_type;
+    MPI_Type_vector(m/p, 1, p, MPI_INT, &vec);
+    MPI_Type_create_resized(vec, 0, sizeof(int), &vec_type);
+    MPI_Type_free(&vec);
+    MPI_Type_commit(&vec_type);
 
-    MPI_Scatter(sendbuf_A, num_local_cols * n, MPI_INT,
-                local_columns, num_local_cols * n, MPI_INT,
-                0, MPI_COMM_WORLD);
+    MPI_Scatter(B, 1, vec_type, localVec, m/p, MPI_INT, 0, MPI_COMM_WORLD);
 
-    int *sendbuf_b = NULL;
-    
-    if (rank == 0) {
-        sendbuf_b = (int*)malloc(m * sizeof(int));
-        int idx = 0;
+    MPI_Barrier(MPI_COMM_WORLD);
 
-        for (int proc = 0; proc < p; proc++) {
-            for (int elem = proc; elem < m; elem += p) {
-                sendbuf_b[idx++] = b[elem];
-            }
-        }
-
-        while (idx < p * num_local_cols) {
-            sendbuf_b[idx++] = 0;
-        }
-    }
-
-    MPI_Scatter(sendbuf_b, num_local_cols, MPI_INT,
-                local_b, num_local_cols, MPI_INT,
-                0, MPI_COMM_WORLD);
-
-
-    for (i = 0; i < n; i++)
-        local_result[i] = 0;
-
-    for (int col_idx = 0; col_idx < num_local_cols; col_idx++) {
-        int global_col = rank + col_idx * p;
-
-        if (global_col < m) {
-            for (int row = 0; row < n; row++) {
-                local_result[row] += local_columns[col_idx * n + row] * local_b[col_idx];
-            }
-        }
-    }
-
-    printf("Proces %d: parcijalni rezultat = ", rank);
-    for (i = 0; i < n; i++)
-        printf("%4d", local_result[i]);
+    printf("\nProces %d local vector: ", rank);
+        for (int i = 0; i < m/p; i++)
+            printf("%d ", localVec[i]);
     printf("\n");
 
-    int final_result[n];
-    MPI_Reduce(local_result, final_result, n, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    int parcijalniRezultat[n];
 
-    if (rank == 0) {
-        printf("FINALNI REZULTAT A × b:\n");
-        for (i = 0; i < n; i++)
-            printf("rezultat[%d] = %d\n", i, final_result[i]);
-
-        free(sendbuf_A);
-        free(sendbuf_b);
+    for (int i = 0; i < n; i++) {
+        parcijalniRezultat[i] = 0;
+        for (int j = 0; j < m/p; j++) {
+            parcijalniRezultat[i] += localColumns[i][j] * localVec[j];
+        }
     }
+
+    MPI_Reduce(parcijalniRezultat, C, n, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    printf("\n$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+    if (rank == 0){
+        printf("\nC: ");
+        for (int i = 0; i < n; i++)
+            printf("%d ", C[i]);
+    }
+    fflush(stdout);
 
     MPI_Finalize();
     return 0;
+    
 }
