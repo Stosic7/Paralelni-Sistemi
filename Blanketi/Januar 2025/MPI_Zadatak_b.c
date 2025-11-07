@@ -36,10 +36,10 @@ int main(int argc, char** argv) {
 
     if (color != MPI_UNDEFINED) {
         int diagRank, diagSize;
-        MPI_Comm_size(diag_comm, &diagRank);
-        MPI_Comm_rank(diag_comm, &diagSize);
+        MPI_Comm_size(diag_comm, &diagSize);
+        MPI_Comm_rank(diag_comm, &diagRank);
 
-        if (rank == 0) {
+        if (diagRank == 0) {
             printf("Inicijalna matrica A:\n");
             for (int i = 0; i < n; i++){
                 for (int j = 0; j < m; j++){
