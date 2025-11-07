@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <mpi.h>
+#include <limits.h>
 
 #define n 3
 #define m 4
@@ -17,6 +18,9 @@ int main(int argc, char** argv) {
 	int nizA[n][k / p];
 	int nizB[k / p][m];
 
+	int minVrste[n];
+	int l = 0;
+
 	if (rank == 0) {
 		printf("Inicijalna matrica A:\n");
 		for (int i = 0; i < n; i++) {
@@ -27,6 +31,22 @@ int main(int argc, char** argv) {
 			printf("\n");
 		}
 		fflush(stdout);
+
+		for (int i = 0; i < n; i++) {
+			int minEl = INT_MAX;
+			for (int j = 0; j < k; j++) {
+				if (A[i][j] < minEl) {
+					minEl = A[i][j];
+				}
+			}
+			minVrste[l++] = minEl;
+		}
+
+		printf("Minimalni elementi svake vrste matrice A: \n");
+		for (int i = 0; i < n; i++) {
+			printf("%2d", minVrste[i]);
+		}
+		printf("\n");
 
 		printf("Inicijalna matrica B:\n");
 		for (int i = 0; i < k; i++) {
