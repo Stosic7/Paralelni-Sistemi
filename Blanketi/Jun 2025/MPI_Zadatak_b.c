@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 		MPI_Comm_rank(div_comm, &divRank);
 		MPI_Comm_size(div_comm, &divSize);
 
-		if (rank == 0) {
+		if (divrank == 0) {
 			for (int i = 0; i < n; i++)
 				for (int j = 0; j < m; j++)
 					A[i][j] = (i + j) % 10;
