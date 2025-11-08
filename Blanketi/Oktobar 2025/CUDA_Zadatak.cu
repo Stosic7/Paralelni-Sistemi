@@ -1,103 +1,79 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-__global__ void find_subsequence(char* A, char* pattern, int* B, int n, int m) {
+#define n 20
+#define m 4
+#define BLOCK_SIZE 256
+
+__global__ void find_subsequence(char* text, char* pattern, int* niz) {
+    __shared__ char shared_pattern[m];
+    __shared__ char shared_text[BLOCK_SIZE + m - 1];
+    
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
+    
+    if (threadIdx.x < m) {
+        shared_pattern[threadIdx.x] = pattern[idx];
+    }
+    
+    if (idx < n) {
+        shared_text[threadIdx.x] = text[idx];
+    }
+    if (threadIdx.x < m - 1 && idx + blockDim.x < n) {
+        shared_text[threadIdx.x + blockDim.x] = text[idx + blockDim.x];
+    }
+    
+    __syncthreads();
+    
     if (idx < n - m + 1) {
         int match = 1;
         for (int i = 0; i < m; i++) {
-            if (A[idx + i] != pattern[i]) {
+            if (shared_text[threadIdx.x + i] != shared_pattern[i]) {
                 match = 0;
                 break;
             }
         }
-
-        B[idx] = match;
+        niz[idx] = match;
     }
 }
 
 int main() {
-    // CPU part
-    int n = 20; // duzina RNK sekvence
-    int m = 4; // duzina trazene podsekvence
+    char* text = (char*)malloc(n * sizeof(char));
+    char* pattern = (char*)malloc(m * sizeof(char));
+    int* niz = (int*)malloc((n - m + 1) * sizeof(int));
 
-    char* h_A = (char*)malloc(n * sizeof(char));
-    char* h_pattern = (char*)malloc(m * sizeof(char));
-    int* h_B = (int*)malloc((n - m + 1) * sizeof(int));
+    strcpy(text, "AUGCAUGCAUGCAUGCAUGC");
+    strcpy(pattern, "AUGC");
+    
+    char* text_d;
+    char* pattern_d;
+    int* niz_d;
 
-    char sequence[] = "AUGCAUGCUAGCUAGCUAGC";
-    memcpy(h_A, sequence, n * sizeof(char));
+    cudaMalloc((void**)&text_d, n * sizeof(char));
+    cudaMalloc((void**)&pattern_d, m * sizeof(char));
+    cudaMalloc((void**)&niz_d, (n - m + 1) * sizeof(int));
 
-    char search_pattern[] = "AUGC";
-    memcpy(h_pattern, search_pattern, m * sizeof(char));
+    cudaMemcpy(text_d, text, n * sizeof(char), cudaMemcpyHostToDevice);
+    cudaMemcpy(pattern_d, pattern, m * sizeof(char), cudaMemcpyHostToDevice);
 
-    for (int i = 0; i < n - m + 1; i++) {
-        h_B[i] = 0;
-    }
+    int threadsPerBlock = BLOCK_SIZE;
+    int blocksPerGrid = ((n - m + 1) + threadsPerBlock - 1) / threadsPerBlock;
 
-    printf("RNK sekvenca: %s\n", h_A);
-    printf("Trazena podsekevnca: %s\n", h_pattern);
-    printf("Duzina sekvence: %d\n", n);
-    printf("Duzina podsekevnce: %d\n", m);
-    printf("\n");
-
-    // GPU part
-    char* d_A;
-    char* d_pattern;
-    int* d_B;
-
-    cudaMalloc((void**)&d_A, n * sizeof(char));
-    cudaMalloc((void**)&d_pattern, m * sizeof(char));
-    cudaMalloc((void**)&d_B, (n - m + 1) * sizeof(int));
-
-    cudaMemcpy(d_A, h_A, n * sizeof(char), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_pattern, h_pattern, m * sizeof(char), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, (n - m + 1) * sizeof(int), cudaMemcpyHostToDevice);
-
-    int threadsPerBlock = 256;
-
-    int blocksPerGrid = (n - m + 1 + threadsPerBlock - 1) / threadsPerBlock;
-
-    printf("Konfiguracija kernela:\n");
-    printf("  Blokova: %d\n", blocksPerGrid);
-    printf("  Thread-ova po bloku: %d\n", threadsPerBlock);
-    printf("  Ukupno thread-ova: %d\n", blocksPerGrid * threadsPerBlock);
-    printf("  Potrebno thread-ova: %d\n", n - m + 1);
-    printf("\n");
-
-    // pokretanje
-    find_subsequence<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_pattern, d_B, n, m);
+    find_subsequence<<<blocksPerGrid, threadsPerBlock>>>(text_d, pattern_d, niz_d);
     cudaDeviceSynchronize();
 
-    //rezultati
-    cudaMemcpy(h_B, d_B, (n - m + 1)*sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(niz, niz_d, (n - m + 1) * sizeof(int), cudaMemcpyDeviceToHost);
 
-    printf("Rezultati pretrage:\n");
-    printf("Pozicija | Pronadjeno\n");
-    printf("---------|------------\n");
     for (int i = 0; i < n - m + 1; i++) {
-        printf("   %2d    |     %d\n", i, h_B[i]);
-        if (h_B[i] == 1) {
-            printf("          | --> Podsekevnca pronadjena na poziciji %d: ", i);
-            for (int j = 0; j < m; j++) {
-                printf("%c", h_A[i + j]);
-            }
-            printf("\n");
-        }
+        printf("%4d", niz[i]);
     }
+    printf("\n");
 
-    // oslobadjanje memorije
-    cudaFree(d_A);
-    cudaFree(d_pattern);
-    cudaFree(d_B);
-
-    free(h_A);
-    free(h_pattern);
-    free(h_B);
+    cudaFree(text_d);
+    cudaFree(pattern_d);
+    cudaFree(niz_d);
+    free(text);
+    free(pattern);
+    free(niz);
 
     return 0;
 }
