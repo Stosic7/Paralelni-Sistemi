@@ -2,47 +2,57 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 
-#define IDX(i, j, N) ((i)*(N)+(j)) // indeksiranje 2D matrice u 1D nizu
+#define IDX(i, j, N) ((i)*(N)+(j))
+#define TILE 16
 
-__global__ void local_variance(const unsigned char* A, float* B, int M, int N) {
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void local_variance(const unsigned char* input_image, float* variance_matrix, int rows, int cols) {
+    __shared__ unsigned char tile[TILE + 2][TILE + 2];
 
-    if (i >= M || j >= N) return;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int col = blockIdx.x * TILE + tx;
+    int row = blockIdx.y * TILE + ty;
+
+    for (int dy = ty; dy < TILE + 2 && row + dy - ty < rows; dy += blockDim.y) {
+        for (int dx = tx; dx < TILE + 2 && col + dx - tx < cols; dx += blockDim.x) {
+            int global_row = blockIdx.y * TILE + dy - 1;
+            int global_col = blockIdx.x * TILE + dx - 1;
+            if (global_row >= 0 && global_row < rows && global_col >= 0 && global_col < cols) {
+                tile[dy][dx] = input_image[IDX(global_row, global_col, cols)];
+            } else {
+                tile[dy][dx] = 0;
+            }
+        }
+    }
+    __syncthreads();
+
+    if (row >= rows || col >= cols) return;
 
     float sum = 0.0f;
-    int window[3][3];
 
-    for (int di = -1; di <= 1; di++) {
-        for (int dj = -1; dj <= 1; dj++) {
-            int ni = i + di;
-            int nj = j + dj;
-            int val = 0;
-            if (ni >= 0 && ni < M && nj >= 0 && nj < N) {
-                val = (int)A[IDX(ni, nj, N)];
-            }
-            window[di+1][dj+1] = val;
-            sum += val;
+    for (int dr = -1; dr <= 1; dr++) {
+        for (int dc = -1; dc <= 1; dc++) {
+            sum += tile[ty + 1 + dr][tx + 1 + dc];
         }
     }
 
     float mean = sum / 9.0f;
 
-    float var = 0.0f;
-    for (int di = 0; di < 3; di++) {
-        for (int dj = 0; dj < 3; dj++) {
-            float diff = window[di][dj] - mean;
-            var += diff * diff;
+    float variance = 0.0f;
+    for (int dr = -1; dr <= 1; dr++) {
+        for (int dc = -1; dc <= 1; dc++) {
+            float diff = tile[ty + 1 + dr][tx + 1 + dc] - mean;
+            variance += diff * diff;
         }
     }
 
-    var /= 9.0f;
+    variance /= 9.0f;
 
-    B[IDX(i, j, N)] = var;
+    variance_matrix[IDX(row, col, cols)] = variance;
 }
 
 int main() {
-    // CPU
     int M = 4;
     int N = 5;
 
@@ -54,37 +64,36 @@ int main() {
     };
 
     unsigned char* h_A = (unsigned char*)malloc(M * N * sizeof(unsigned char));
-    float* h_B = (float*)malloc(N*M*sizeof(float));
+    float* h_B = (float*)malloc(N * M * sizeof(float));
 
     for (int i = 0; i < M * N; i++)
         h_A[i] = sample[i];
-    
 
-    // GPU
     unsigned char* d_A;
     float* d_B;
 
-    cudaMalloc((void**)&d_A, M*N*sizeof(unsigned char));
-    cudaMalloc((void**)&d_B, M*N*sizeof(float));
-    cudaMemcpy(d_A, h_A, M*N*sizeof(unsigned char), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_A, M * N * sizeof(unsigned char));
+    cudaMalloc((void**)&d_B, M * N * sizeof(float));
+    cudaMemcpy(d_A, h_A, M * N * sizeof(unsigned char), cudaMemcpyHostToDevice);
 
-    // definicija blokova i grid-a
-    dim3 threadsPerBlock(16, 16);
-    dim3 blocksPerGrid((N + threadsPerBlock.x - 1)/threadsPerBlock.x, (M + threadsPerBlock.y - 1)/threadsPerBlock.y);
+    dim3 threadsPerBlock(TILE, TILE);
+    dim3 blocksPerGrid((N + TILE - 1) / TILE, (M + TILE - 1) / TILE);
 
-    // kernel
     local_variance<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, M, N);
+    cudaDeviceSynchronize();
 
-     printf("Matrica varijanse (B):\n");
+    cudaMemcpy(h_B, d_B, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+    printf("Matrica varijanse (B):\n");
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++)
             printf("%.2f ", h_B[IDX(i, j, N)]);
         printf("\n");
     }
 
-    cudaFree(d_A); 
+    cudaFree(d_A);
     cudaFree(d_B);
-    free(h_A); free(h_B);
+    free(h_A);
+    free(h_B);
     return 0;
-    
 }
