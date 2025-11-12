@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     MPI_Datatype col_vec, col_type;
-    MPI_Type_vector(k * (m / p), m / p, m, MPI_INT, &col_vec);
+    MPI_Type_vector(k, m / p, m, MPI_INT, &col_vec);
     MPI_Type_create_resized(col_vec, 0, (m / p) * sizeof(int), &col_type);
     MPI_Type_free(&col_vec);
     MPI_Type_commit(&col_type);
