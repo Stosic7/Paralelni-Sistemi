@@ -6,48 +6,42 @@
 #define TILE 16
 
 __global__ void detect_stars_shared(unsigned char* image, int* stars, int rows, int cols) {
-
     __shared__ unsigned char tile[TILE+2][TILE+2];
 
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-
     int col = blockIdx.x * TILE + tx;
     int row = blockIdx.y * TILE + ty;
 
-    for (int dy = ty; dy < TILE+2 && row+dy-ty < rows; dy += blockDim.y) {
-        for (int dx = tx; dx < TILE+2 && col+dx-tx < cols; dx += blockDim.x) {
-            int global_row = blockIdx.y * TILE + dy - 1;
-            int global_col = blockIdx.x * TILE + dx - 1;
-            if (global_row >= 0 && global_row < rows && global_col >=0 && global_col < cols) {
-                tile[dy][dx] = image[IDX(global_row, global_col, cols)];
-            } else {
-                tile[dy][dx] = 0; 
-            }
+    // Učitavanje tile-a sa halo regionom
+    int tileSize = TILE + 2;
+    for (int i = ty; i < tileSize; i += TILE) {
+        for (int j = tx; j < tileSize; j += TILE) {
+            int gr = blockIdx.y * TILE + i - 1;
+            int gc = blockIdx.x * TILE + j - 1;
+            tile[i][j] = (gr >= 0 && gr < rows && gc >= 0 && gc < cols) 
+                         ? image[IDX(gr, gc, cols)] : 0;
         }
     }
     __syncthreads();
 
     if (row >= rows || col >= cols) return;
 
-    int pixel_value = tile[ty+1][tx+1];
-    int neighbor_sum = 0;
-    int neighbor_count = 0;
-
-    if (pixel_value > 128) {
-        for (int dr = -1; dr <= 1; dr++) {
-            for (int dc = -1; dc <= 1; dc++) {
-                if (dr == 0 && dc == 0) continue;
-                neighbor_sum += tile[ty+1+dr][tx+1+dc];
-                neighbor_count++;
-            }
-        }
-
-        float neighbor_avg = (neighbor_count > 0) ? ((float)neighbor_sum / neighbor_count) : 0.0f;
-        stars[IDX(row, col, cols)] = neighbor_avg > 64 ? 1 : 0;
-    } else {
+    unsigned char pixel = tile[ty+1][tx+1];
+    if (pixel <= 128) {
         stars[IDX(row, col, cols)] = 0;
+        return;
     }
+
+    // Računanje sume suseda
+    int sum = 0;
+    for (int dr = -1; dr <= 1; dr++) {
+        for (int dc = -1; dc <= 1; dc++) {
+            if (dr || dc) sum += tile[ty+1+dr][tx+1+dc];
+        }
+    }
+
+    stars[IDX(row, col, cols)] = (sum > 512) ? 1 : 0; // 64*8 = 512
 }
 
 int main() {
