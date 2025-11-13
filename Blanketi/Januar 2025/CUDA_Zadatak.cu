@@ -10,19 +10,16 @@ __global__ void local_variance(const unsigned char* input_image, float* variance
 
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-
     int col = blockIdx.x * TILE + tx;
     int row = blockIdx.y * TILE + ty;
 
-    for (int dy = ty; dy < TILE + 2 && row + dy - ty < rows; dy += blockDim.y) {
-        for (int dx = tx; dx < TILE + 2 && col + dx - tx < cols; dx += blockDim.x) {
-            int global_row = blockIdx.y * TILE + dy - 1;
-            int global_col = blockIdx.x * TILE + dx - 1;
-            if (global_row >= 0 && global_row < rows && global_col >= 0 && global_col < cols) {
-                tile[dy][dx] = input_image[IDX(global_row, global_col, cols)];
-            } else {
-                tile[dy][dx] = 0;
-            }
+    int tileSize = TILE + 2;
+    for (int i = ty; i < tileSize; i += TILE) {
+        for (int j = tx; j < tileSize; j += TILE) {
+            int gr = blockIdx.y * TILE + i - 1;
+            int gc = blockIdx.x * TILE + j - 1;
+            tile[i][j] = (gr >= 0 && gr < rows && gc >= 0 && gc < cols) 
+                         ? input_image[IDX(gr, gc, cols)] : 0;
         }
     }
     __syncthreads();
@@ -30,26 +27,20 @@ __global__ void local_variance(const unsigned char* input_image, float* variance
     if (row >= rows || col >= cols) return;
 
     float sum = 0.0f;
-
+    float sum_sq = 0.0f;
+    
+    #pragma unroll
     for (int dr = -1; dr <= 1; dr++) {
+        #pragma unroll
         for (int dc = -1; dc <= 1; dc++) {
-            sum += tile[ty + 1 + dr][tx + 1 + dc];
+            unsigned char val = tile[ty + 1 + dr][tx + 1 + dc];
+            sum += val;
+            sum_sq += val * val;
         }
     }
 
-    float mean = sum / 9.0f;
-
-    float variance = 0.0f;
-    for (int dr = -1; dr <= 1; dr++) {
-        for (int dc = -1; dc <= 1; dc++) {
-            float diff = tile[ty + 1 + dr][tx + 1 + dc] - mean;
-            variance += diff * diff;
-        }
-    }
-
-    variance /= 9.0f;
-
-    variance_matrix[IDX(row, col, cols)] = variance;
+    float mean = sum * 0.111111f; // 1/9
+    variance_matrix[IDX(row, col, cols)] = sum_sq * 0.111111f - mean * mean;
 }
 
 int main() {
